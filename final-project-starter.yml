@@ -1,0 +1,457 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: This template creates a VPC with two public and private subnets and an autoscaling group, load balancer, Nat Gateway, Internet Gateway and a bastion host for troubleshooting. This the settup fo rthe Udagram APP
+  
+Parameters:
+  EnvironmentName:
+    Description: Please enter the current devop environment name
+    Type: String
+  UdagramVpcCidr:
+    Default: 10.0.0.0/16
+    Description: Please enter the VPC CIDR range
+    Type: String
+
+  PrivateSubnet1CIDR:
+    Default: 10.0.16.0/20
+    Description: Please enter Private Subnet1  CIDR range
+    Type: String
+
+  PrivateSubnet2CIDR:
+    Default: 10.0.32.0/20
+    Description: Please enter Private Subnet2  CIDR range
+    Type: String
+
+    
+  PublicSubnet1CIDR:
+    Default: 10.0.0.0/24
+    Description: Please enter Public Subnet1  CIDR range
+    Type: String
+
+  PublicSubnet2CIDR:
+    Default: 10.0.1.0/24
+    Description: Please enter Public Subnet2  CIDR range
+    Type: String
+
+  
+  LaunchTemplateVersionNumber:
+    Default: 1
+    Type: String
+  
+  CPUPolicyTargetValue:
+    Default: 60
+    Description: Please enter the target CPU utilization
+    Type: String
+
+Resources:
+  UdagramVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref UdagramVpcCidr
+      EnableDnsHostnames: True
+      EnableDnsSupport: True
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Udagram VPC
+# Creation of the internet gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Udagram Udagram infra internet GateWay
+# Attaching the internet gateway to the VPC to allow access to the internet
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref UdagramVPC
+
+# Creating Public Subnets to host our internet facing resources like Bastion Host and NateGateway
+
+
+  UdagramNateGW1EIP:
+      Type: AWS::EC2::EIP
+      DependsOn: InternetGatewayAttachment
+      Properties: 
+          Domain: !Ref UdagramVPC
+
+  UdagramNateGW2EIP:
+      Type: AWS::EC2::EIP
+      DependsOn: InternetGatewayAttachment
+      Properties:
+          Domain: !Ref UdagramVPC
+
+  UdagramNateGW1: 
+      Type: AWS::EC2::NatGateway
+      Properties: 
+          AllocationId: !GetAtt UdagramNateGW1EIP.AllocationId
+          SubnetId: !Ref PublicSubnet1
+
+  UdagramNateGW2: 
+      Type: AWS::EC2::NatGateway
+      Properties:
+          AllocationId: !GetAtt UdagramNateGW2EIP.AllocationId
+          SubnetId: !Ref PublicSubnet2
+
+
+  UdagramPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref UdagramNateGW1
+      RouteTableId: !Ref PrivateRoutingTable1
+
+  UdagramPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref UdagramNateGW2
+      RouteTableId: !Ref PrivateRoutingTable2
+
+# Creating the Udagram Private subnets, our Application Tier
+  PrivateSubnet1:
+      Type: AWS::EC2::Subnet
+      Properties:
+        AvailabilityZone: !Select [ 0, !GetAZs '' ]
+        CidrBlock: !Ref PrivateSubnet1CIDR
+        MapPublicIpOnLaunch: false
+        Tags:
+          - Key: Name
+            Value: !Sub ${EnvironmentName} Udagram Private Subnet1 
+        VpcId: !Ref UdagramVPC
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Udagram Private Subnet2 
+      VpcId: !Ref UdagramVPC
+
+ # Creating Routing Table for Udagram Private subnets
+  PrivateRoutingTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref UdagramVPC
+      Tags:
+      - Key: Name
+        Value: !Sub ${EnvironmentName} Udagram Private Routing Table1
+
+  PrivateRoutingTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref UdagramVPC
+      Tags:
+      - Key: Name
+        Value: !Sub ${EnvironmentName} Udagram Private Routing Table2
+
+  PrivateSubnetRoutingTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRoutingTable1
+
+  PrivateSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRoutingTable2
+
+# Creating the Udagram Public subnets, Internet facing loadbalancer
+  PublicSubnet1:
+      Type: AWS::EC2::Subnet
+      Properties:
+        AvailabilityZone: !Select [ 0, !GetAZs '' ]
+        CidrBlock: !Ref PublicSubnet1CIDR
+        MapPublicIpOnLaunch: false
+        Tags:
+          - Key: Name
+            Value: !Sub ${EnvironmentName} Udagram Public Subnet1 
+        VpcId: !Ref UdagramVPC
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Udagram Public Subnet2 
+      VpcId: !Ref UdagramVPC
+
+# Creating Routing Table and subnet Association for Udagram Public subnets      
+# Creating Udagram Route Table
+  PublicRoutingTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Udagram Public Routing Table
+      VpcId: !Ref UdagramVPC
+
+  UdagramPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRoutingTable
+
+# Creating Udagram Associate Subnets
+  PublicSubnet1RoutingTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRoutingTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RoutingTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRoutingTable
+      SubnetId: !Ref PublicSubnet2
+      
+
+#Creating EC2 Security Group
+  InstanceSecurityGroup: 
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Udagram Security Group that Opens HTTP (port 80) and SSH (port 22)
+      VpcId: !Ref UdagramVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId:
+            Fn::GetAtt:
+            - ALBSecurityGroup
+            - GroupId
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+#Creating ALB Security Group
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Udagram Application load balancer Security Group
+      VpcId: !Ref UdagramVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+
+# Bastion Host Security Group
+  BastionHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Udagram Bastion Host Security Group
+      VpcId: !Ref UdagramVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+        
+# Udagram instant profile and iam role to acces s3
+
+  UdagramInstanceProfile: 
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      Path: /
+      Roles: 
+        - Ref: UdagramEC2S3Role
+# Udagram Role
+  UdagramEC2S3Role: 
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement: 
+          - 
+            Effect: Allow
+            Principal: 
+              Service: 
+                - ec2.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+      Path: /
+
+# Udagram Policy
+  RolePolicies: 
+      Type: AWS::IAM::Policy
+      Properties: 
+        PolicyName: UdagramEC2S3RolePolicy
+        PolicyDocument: 
+          Version: 2012-10-17
+          Statement: 
+            - Effect: Allow
+              Action: "*"
+              Resource: 
+                - arn:aws:s3:::udagramappv00/*
+                - arn:aws:s3:::udagramappv00
+        Roles: 
+          - Ref: UdagramEC2S3Role
+
+# Udagram Instance Profile
+  RootInstanceProfile: 
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      Path: /
+      Roles: 
+        - Ref: UdagramEC2S3Role
+
+  UdagramBastionHost:
+      Type: 'AWS::EC2::Instance'
+      Properties: 
+        ImageId: ami-0ca285d4c2cda3300
+        InstanceType: t3.micro
+        AvailabilityZone: !Select [ 1, !GetAZs ] 
+        Tags:
+          - Key: Name
+            Value: !Sub ${EnvironmentName} Bastion Host
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: true
+            DeleteOnTermination: true
+            SubnetId: !Ref PublicSubnet2
+            GroupSet: 
+              - !Ref InstanceSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            sudo yum update -y
+            sudo yum install -y httpd
+            sudo systemctl start httpd
+            sudo systemctl enable httpd 
+
+# The Launch Template that will be used to deploy udagram autoscaling group
+  UdagramLaunchTemplate: 
+    Type: AWS::EC2::LaunchTemplate
+    # DependedOn: None
+    Properties:
+      LaunchTemplateName:   !Sub ${EnvironmentName}-UdagramLaunchTemplate
+      LaunchTemplateData:
+        BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            DeleteOnTermination: 'true'
+            VolumeSize: 10
+            VolumeType: gp2
+        ImageId: ami-0cfa91bdbc3be780c
+
+    # Get ARN of InstanceProfile defined above
+        IamInstanceProfile: 
+          Arn: !GetAtt
+            - UdagramInstanceProfile
+            - Arn
+        InstanceType: t2.medium
+        SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+        TagSpecifications:
+        - ResourceType: instance
+          Tags:
+          - Key: Name
+            Value: !Sub ${EnvironmentName} Instance
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash -xe
+              apt update -y
+              apt install -y apache2
+              systemctl start apache2
+              systemctl enable apache2
+              apt-get install apache2 awscli -y
+              systemctl start apache2.service  
+              sudo rm /var/www/html/index.html
+              aws s3 cp s3://udagramappv00/index.html /var/www/html
+              chown ubuntu index.html
+        
+
+
+# Create AutoScaling Group
+  UdagramAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: '2'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref UdagramLaunchTemplate
+        Version: !Ref LaunchTemplateVersionNumber
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      TargetGroupARNs: 
+        - !Ref UdagramLBTargetGroup
+
+
+# Udagram AutoScaling Group Tracking Policy
+  UdagramCPUPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref UdagramAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref CPUPolicyTargetValue
+
+# Target Group, Listener and Application  Load Balancer Secction
+
+# Udagram Target Group Creation
+  UdagramLBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 15
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 3
+      HealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      Name: UdagramEC2TargetGroup
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref UdagramVPC
+
+# Udagram load balancer listener Creation
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref UdagramLBTargetGroup
+      LoadBalancerArn: !Ref UdagramALB
+      Port: 80
+      Protocol: HTTP
+
+# Udagram Application load balancer  Creation
+  UdagramALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: UdagramALB
+      Scheme: internet-facing
+      Subnets:
+      - !Ref PublicSubnet1
+      - !Ref PublicSubnet2
+      SecurityGroups:
+        - !GetAtt ALBSecurityGroup.GroupId
+
+
+# Outputs to be used letter
+Outputs:
+    LoadBalancerUrl:
+      Description: Public URL of Udagram Load Balancer
+      Value:  !Join [ "", ["http://",!GetAtt UdagramALB.DNSName ] ]
+
